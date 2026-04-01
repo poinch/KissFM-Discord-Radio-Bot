@@ -14,8 +14,6 @@ const {
 const { spawn } = require("child_process");
 
 const TOKEN = process.env.DISCORD_TOKEN;
-
-const TARGET_VOICE_CHANNEL_ID = process.env.TARGET_VOICE_CHANNEL_ID;
 const RADIO_URL = process.env.RADIO_URL;
 
 const client = new Client({
@@ -25,15 +23,18 @@ const client = new Client({
   ],
 });
 
-let connection = null;
-let player = null;
-let ffmpegProcess = null;
+// Map to store active audio streams per guild
+// Key: guildId
+// Value: { connection, player, ffmpegProcess, activeChannelId }
+const activeStreams = new Map();
 
 async function startRadio(channel) {
   if (!channel) return;
-  if (connection) return;
+  const guildId = channel.guild.id;
 
-  connection = joinVoiceChannel({
+  if (activeStreams.has(guildId)) return;
+
+  const connection = joinVoiceChannel({
     channelId: channel.id,
     guildId: channel.guild.id,
     adapterCreator: channel.guild.voiceAdapterCreator,
@@ -42,7 +43,7 @@ async function startRadio(channel) {
 
   await entersState(connection, VoiceConnectionStatus.Ready, 20_000);
 
-  ffmpegProcess = spawn("ffmpeg", [
+  const ffmpegProcess = spawn("ffmpeg", [
     "-reconnect", "1",
     "-reconnect_streamed", "1",
     "-reconnect_delay_max", "5",
@@ -61,7 +62,7 @@ async function startRadio(channel) {
     inputType: StreamType.Raw,
   });
 
-  player = createAudioPlayer({
+  const player = createAudioPlayer({
     behaviors: {
       noSubscriber: NoSubscriberBehavior.Play,
     },
@@ -70,73 +71,110 @@ async function startRadio(channel) {
   connection.subscribe(player);
   player.play(resource);
 
+  // Store the stream context for this guild
+  activeStreams.set(guildId, {
+    connection,
+    player,
+    ffmpegProcess,
+    activeChannelId: channel.id,
+  });
+
   player.on("error", (err) => {
-    console.error("Player error:", err);
-    stopRadio();
+    console.error(`[${guildId}] Player error:`, err);
+    stopRadio(guildId);
   });
 
   player.on(AudioPlayerStatus.Idle, () => {
-    console.log("Stream finished.");
-    stopRadio();
+    console.log(`[${guildId}] Stream finished.`);
+    stopRadio(guildId);
   });
 
   connection.on(VoiceConnectionStatus.Disconnected, () => {
-    console.log("Bot disconnected.");
-    stopRadio();
+    console.log(`[${guildId}] Bot disconnected.`);
+    stopRadio(guildId);
   });
 
-  console.log("Radio started.");
+  console.log(`[${guildId}] Radio started in channel: ${channel.name}`);
 }
 
-function stopRadio() {
-  try {
-    if (player) player.stop();
-  } catch {}
+function stopRadio(guildId) {
+  const stream = activeStreams.get(guildId);
+  if (!stream) return;
 
-  try {
-    if (connection) connection.destroy();
-  } catch {}
+  try { if (stream.player) stream.player.stop(); } catch {}
+  try { if (stream.connection) stream.connection.destroy(); } catch {}
+  try { if (stream.ffmpegProcess) stream.ffmpegProcess.kill("SIGKILL"); } catch {}
 
-  try {
-    if (ffmpegProcess) ffmpegProcess.kill("SIGKILL");
-  } catch {}
-
-  player = null;
-  connection = null;
-  ffmpegProcess = null;
+  activeStreams.delete(guildId);
+  console.log(`[${guildId}] Radio stopped and resources cleaned up.`);
 }
 
-client.once("clientReady", () => {
-  console.log(`Bot online as ${client.user.tag}`);
+// ──────────────────────────────────────────────
+// Slash command handler: /mdma
+// ──────────────────────────────────────────────
+client.on("interactionCreate", async (interaction) => {
+  if (!interaction.isChatInputCommand()) return;
+  if (interaction.commandName !== "mdma") return;
+
+  const member = interaction.member;
+  const voiceChannel = member.voice?.channel;
+
+  if (!voiceChannel) {
+    return interaction.reply({
+      content: "❌ You must be in a voice channel to use this command!",
+      ephemeral: true,
+    });
+  }
+
+  const guildId = interaction.guildId;
+
+  // If the bot is already active in this server
+  if (activeStreams.has(guildId)) {
+    return interaction.reply({
+      content: "📻 The radio is already active on this server! Join the voice channel to listen.",
+      ephemeral: true,
+    });
+  }
+
+  await interaction.reply({
+    content: `📻 Starting Kiss FM in **${voiceChannel.name}**...`,
+    ephemeral: false,
+  });
+
+  try {
+    await startRadio(voiceChannel);
+  } catch (err) {
+    console.error(`[${guildId}] Error starting radio:`, err);
+    stopRadio(guildId);
+    await interaction.editReply("❌ Error starting the radio. Please try again.");
+  }
 });
 
-client.on("voiceStateUpdate", async (oldState, newState) => {
-  // Only care about events involving the target channel
-  const isTargetChannelInvolved =
-    oldState.channelId === TARGET_VOICE_CHANNEL_ID ||
-    newState.channelId === TARGET_VOICE_CHANNEL_ID;
-
-  if (!isTargetChannelInvolved) return;
-
+// ──────────────────────────────────────────────
+// Auto-leave when the channel is empty
+// ──────────────────────────────────────────────
+client.on("voiceStateUpdate", (oldState, newState) => {
   const guild = newState.guild ?? oldState.guild;
-  const targetChannel = guild.channels.cache.get(TARGET_VOICE_CHANNEL_ID);
-  if (!targetChannel) return;
+  const guildId = guild.id;
 
-  // Count only non-bot members in the target channel
-  const humanCount = targetChannel.members.filter((m) => !m.user.bot).size;
+  const stream = activeStreams.get(guildId);
+  if (!stream) return;
 
-  if (humanCount > 0 && !connection) {
-    try {
-      console.log(`Joining target channel (${humanCount} user(s) present).`);
-      await startRadio(targetChannel);
-    } catch (err) {
-      console.error("Error starting radio:", err);
-      stopRadio();
-    }
-  } else if (humanCount === 0 && connection) {
-    console.log("No users left in channel, leaving.");
-    stopRadio();
+  const activeChannel = guild.channels.cache.get(stream.activeChannelId);
+  if (!activeChannel) return;
+
+  // Count only humans left in the channel (exclude bots)
+  const humanCount = activeChannel.members.filter((m) => !m.user.bot).size;
+
+  if (humanCount === 0) {
+    console.log(`[${guildId}] No users left in the channel, leaving...`);
+    stopRadio(guildId);
   }
+});
+
+// ──────────────────────────────────────────────
+client.once("clientReady", () => {
+  console.log(`✅ Bot online as: ${client.user.tag}`);
 });
 
 client.login(TOKEN);
