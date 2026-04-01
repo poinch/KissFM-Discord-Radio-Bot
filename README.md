@@ -1,10 +1,11 @@
 # KissFM Radio Bot 📻
 
-A simple Discord bot that joins a specific voice channel and streams an internet radio station whenever a specific user joins that channel.
+A simple Discord bot that joins a specific voice channel and streams an internet radio station whenever at least one user is present in that channel.
 
 ## Features
 
-- **Auto-Join & Auto-Leave:** The bot automatically joins the target voice channel when the designated user joins, and leaves when they leave.
+- **Auto-Join & Auto-Leave:** The bot automatically joins the target voice channel as soon as any user enters it, and leaves when the last user disconnects.
+- **Presence-Based Logic:** The bot monitors the member count of the target channel — it doesn't follow a specific user, it follows the crowd.
 - **Continuous Stream:** Uses `ffmpeg` to stream internet radio efficiently with robust reconnection logic.
 - **Easy Configuration:** Configurable entirely via environment variables.
 
@@ -28,13 +29,11 @@ Create a `.env` file in the root directory and configure your variables:
 
 ```env
 DISCORD_TOKEN=your_discord_bot_token_here
-MY_USER_ID=your_discord_user_id
 TARGET_VOICE_CHANNEL_ID=the_voice_channel_id_to_join
 RADIO_URL=the_audio_stream_url
 ```
 
 - `DISCORD_TOKEN`: Your bot's token from the Discord Developer Portal.
-- `MY_USER_ID`: The Discord ID of the user the bot should monitor.
 - `TARGET_VOICE_CHANNEL_ID`: The ID of the voice channel where the bot will play the radio.
 - `RADIO_URL`: The direct URL to the internet radio audio stream (e.g., an MP3, AAC, or M3U8 stream).
 
@@ -46,4 +45,5 @@ Start the bot with:
 node index.js
 ```
 
-Once running, simply join your designated target voice channel. The bot will automatically follow you into the channel and start streaming the configured radio URL. When you leave, the bot will stop the stream and disconnect.
+Once running, the bot will monitor the target voice channel. As soon as any user joins, the bot will automatically enter the channel and start streaming the configured radio URL. When the last user leaves, the bot will stop the stream and disconnect.
+

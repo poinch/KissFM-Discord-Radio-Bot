@@ -14,7 +14,7 @@ const {
 const { spawn } = require("child_process");
 
 const TOKEN = process.env.DISCORD_TOKEN;
-const MY_USER_ID = process.env.MY_USER_ID;
+
 const TARGET_VOICE_CHANNEL_ID = process.env.TARGET_VOICE_CHANNEL_ID;
 const RADIO_URL = process.env.RADIO_URL;
 
@@ -111,28 +111,30 @@ client.once("clientReady", () => {
 });
 
 client.on("voiceStateUpdate", async (oldState, newState) => {
-  const joinedTarget =
-    newState.member?.id === MY_USER_ID &&
-    newState.channelId === TARGET_VOICE_CHANNEL_ID &&
-    oldState.channelId !== TARGET_VOICE_CHANNEL_ID;
+  // Only care about events involving the target channel
+  const isTargetChannelInvolved =
+    oldState.channelId === TARGET_VOICE_CHANNEL_ID ||
+    newState.channelId === TARGET_VOICE_CHANNEL_ID;
 
-  const leftTarget =
-    oldState.member?.id === MY_USER_ID &&
-    oldState.channelId === TARGET_VOICE_CHANNEL_ID &&
-    newState.channelId !== TARGET_VOICE_CHANNEL_ID;
+  if (!isTargetChannelInvolved) return;
 
-  if (joinedTarget) {
+  const guild = newState.guild ?? oldState.guild;
+  const targetChannel = guild.channels.cache.get(TARGET_VOICE_CHANNEL_ID);
+  if (!targetChannel) return;
+
+  // Count only non-bot members in the target channel
+  const humanCount = targetChannel.members.filter((m) => !m.user.bot).size;
+
+  if (humanCount > 0 && !connection) {
     try {
-      console.log("Joining target channel");
-      await startRadio(newState.channel);
+      console.log(`Joining target channel (${humanCount} user(s) present).`);
+      await startRadio(targetChannel);
     } catch (err) {
       console.error("Error starting radio:", err);
       stopRadio();
     }
-  }
-
-  if (leftTarget) {
-    console.log("Leaving target channel");
+  } else if (humanCount === 0 && connection) {
+    console.log("No users left in channel, leaving.");
     stopRadio();
   }
 });
