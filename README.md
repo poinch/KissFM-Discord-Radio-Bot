@@ -1,4 +1,4 @@
-# KissFM Radio Bot 📻
+# KissFM Discord Radio Bot 📻
 
 A simple Discord bot that joins a specific voice channel and streams an internet radio station whenever at least one user is present in that channel.
 
