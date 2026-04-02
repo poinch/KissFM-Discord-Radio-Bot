@@ -11,7 +11,7 @@ A simple Discord bot that joins your voice channel and streams an internet radio
 
 ## Requirements
 
-- [Node.js](https://nodejs.org/)
+- [Node.js](https://nodejs.org/) (v22 or higher)
 - [FFmpeg](https://ffmpeg.org/) installed and available in your system's PATH.
 - A Discord Bot Token.
 - Your bot must be invited to servers with the `application.commands` scope via OAuth2 URL generator.
